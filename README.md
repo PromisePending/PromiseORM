@@ -1,8 +1,8 @@
-<h1 align="center">PromiseDB</h1>
+<h1 align="center">PromiseORM</h1>
 
 <p align="center">
   <a href="">
-    <img src="https://img.shields.io/github/license/PromisePending/PromiseDB?style=flat-square&color=0394fc" alt="License" />
+    <img src="https://img.shields.io/github/license/PromisePending/PromiseORM?style=flat-square&color=0394fc" alt="License" />
   </a>
   <a href="https://discord.gg/qUMUJW2XgF">
     <img src="https://img.shields.io/discord/866707606433562634?style=flat-square&color=7289da&logo=discord&logoColor=FFFFFF"/>
@@ -13,14 +13,14 @@
 
 <h2 align="center">📖 About</h2>
 
-&nbsp;&nbsp;&nbsp;&nbsp;PromiseDB is a Typescript ORM for automatic creation and management of models and entries from simple objects and arrays.
+&nbsp;&nbsp;&nbsp;&nbsp;PromiseORM is a Typescript ORM for automatic creation and management of models and entries from simple objects and arrays.
 It is designed to be used with any database, but currently only implements MariaDB/MySQL.
 
 ## Usage
 
 ```typescript
-import { DatabaseManager, MariaDBConnection, BaseModel, EDatabaseTypes } from 'promisedb';
-// const { DatabaseManager, MariaDBConnection, BaseModel, EDatabaseTypes } = require('promisedb');
+import { DatabaseManager, MariaDBConnection, BaseModel, EDatabaseTypes } from 'promiseorm';
+// const { DatabaseManager, MariaDBConnection, BaseModel, EDatabaseTypes } = require('promiseorm');
 
 // if you're only going to have a single connection you may pass it as parameter in DatabaseManager constructor and it will automatically register it under the name 'default'
 const dbmgr = new DatabaseManager();
@@ -102,7 +102,7 @@ iceModel.create({
       </a>
     </td>
     <td align="center">
-      <a href="https://github.com/emanuelfranklyn">
+      <a href="https://github.com/spacefox1">
         <img src="https://avatars.githubusercontent.com/u/44732812?v=4" width="100px;" alt="SpaceFox's GitHub profile logo"/>
         <br />
         <sub>

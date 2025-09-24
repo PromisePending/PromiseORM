@@ -1,3 +1,7 @@
+# V1.0.4
+
+- NOTICE: Rebranding 'promisedb' to 'promiseorm'
+
 # V1.0.3
 
 - Fix: Register schema not awaiting before returning
