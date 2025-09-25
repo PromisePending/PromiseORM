@@ -42,6 +42,7 @@ export class MariaDBConnection extends DatabaseConnection {
       port: this.port,
       database: this.database,
       connectionLimit: 10,
+      allowPublicKeyRetrieval: true,
     });
     this.isConnecting = true;
     const tmpConn = await this.pool.getConnection();

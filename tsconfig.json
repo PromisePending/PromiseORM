@@ -13,10 +13,10 @@
     "declaration": true,
     "declarationMap": true,
     "sourceMap": true,
-    "moduleResolution": "node",
+    "moduleResolution": "node16",
     "skipLibCheck": true,
     "target": "ES2022",
-    "module": "CommonJS",
+    "module": "node16",
     "outDir": "build",
     "types": ["node"],
     "noImplicitAny": true
