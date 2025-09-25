@@ -1,3 +1,7 @@
+# V1.0.5
+
+- Fix: Can't connect to MySql instances due to missing allowPublicKeyRetrieval: true in connection options
+
 # V1.0.4
 
 - NOTICE: Rebranding 'promisedb' to 'promiseorm'
