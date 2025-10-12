@@ -24,7 +24,7 @@ import { DatabaseManager, MariaDBConnection, BaseModel, EDatabaseTypes } from 'p
 
 // if you're only going to have a single connection you may pass it as parameter in DatabaseManager constructor and it will automatically register it under the name 'default'
 const dbmgr = new DatabaseManager();
-const mariadb = new MariaDBConnection('localhost', 3306, 'username', 'password', 'database');
+const mariadb = new MariaDBConnection({ hostname: 'localhost', port: 3306, username: 'username', password: 'password', database: 'database' });
 await dbmgr.registerConnection('prodmaria', mariadb);
 
 // You can also extends BaseModel in a class and pass the params to super() if you wish to instantiate your models all a once somewhere else.
@@ -35,6 +35,13 @@ const iceCreamModel = new BaseModel({
         nullable: false,
         unique: true,
         primaryKey: true,
+    },
+    calories: {
+        type: EDatabaseTypes.UINT, // Unsigned integer
+        maxSize: 30_000, // 30,000 calories max (max integer value, not byte size!)
+        minSize: 0,
+        primaryKey: false,
+        autoIncrement: false,
     },
     price: {
         type: EDatabaseTypes.DECIMAL,
@@ -48,6 +55,7 @@ const iceCreamModel = new BaseModel({
 const iceModel = await dbmgr.getConnection('prodmaria').registerModel('icecream', iceCreamModel);
 iceModel.create({
     flavor: 'chocolate',
+    calories: 250,
     price: 9.99,
 }).then(async () => {
     console.log('Successfully created item on database!');
@@ -57,7 +65,7 @@ iceModel.create({
 /* Output:
 
 > Successfully created item on database!
-{ flavor: 'chocolate', price: '9.99' }
+{ flavor: 'chocolate', calories: 250, price: '9.99' }
 
 */
 ```

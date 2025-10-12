@@ -20,7 +20,7 @@ export class MariaDBConnection extends DatabaseConnection {
   private pool?: mariaDB.Pool;
   private isConnecting: boolean;
 
-  constructor(hostname: string, port: number, username: string, password: string, database: string) {
+  constructor({ hostname, port, username, password, database }: { hostname: string, port: number, username: string, password: string, database: string }) {
     super();
 
     this.hostname = hostname;
@@ -181,15 +181,16 @@ export class MariaDBConnection extends DatabaseConnection {
    * @private
    */
   private convertTypes(field: IDatabaseField): IMariaDBField {
-    if (!field.maxSize && field.type !== EDatabaseTypes.BOOLEAN) throw new DatabaseException('Any field (other than boolean) must have a maxSize!');
+    if (!(field.type === EDatabaseTypes.BOOLEAN || field.type === EDatabaseTypes.TIMESTAMP) && !field.maxSize)
+      throw new DatabaseException('Any field (other than boolean and timestamp) must have a maxSize!');
     const finalObject: IMariaDBField = {
       type: EMariaDBFieldTypes.string,
       attributes: '',
-      typeSize: field.maxSize ?? 1,
+      typeSize: (field.type === EDatabaseTypes.BOOLEAN ? 1 : field.maxSize) ?? 1,
       nullable: field.nullable,
       primaryKey: (field.primaryKey && (field.type === EDatabaseTypes.UINT || field.type === EDatabaseTypes.SINT)) ?? false,
       autoIncrement: field.autoIncrement ?? false,
-      unique: field.unique ?? false,
+      unique: (field.type === EDatabaseTypes.BOOLEAN ? false : field.unique) ?? false,
       default: field.default,
     };
     switch (field.type) {
@@ -251,14 +252,14 @@ export class MariaDBConnection extends DatabaseConnection {
     const uniqueKeys: string[] = [];
     fieldsKeys.forEach((fieldKey) => {
       if (fields[fieldKey].primaryKey) primaryKeys.push(conn.escapeId(fieldKey));
-      if (fields[fieldKey].unique) uniqueKeys.push(conn.escapeId(fieldKey));
+      if (fields[fieldKey].type !== EDatabaseTypes.BOOLEAN && fields[fieldKey].unique) uniqueKeys.push(conn.escapeId(fieldKey));
     });
 
     // Add the constraints
     if (primaryKeys.length > 0) tableFields.push(`PRIMARY KEY (${primaryKeys.join(', ')})`);
     uniqueKeys.filter((key) => !primaryKeys.includes(key)).forEach((key) => tableFields.push(`UNIQUE INDEX ${key} (${key})`));
     fieldsKeys.filter(key => fields[key].foreignKey).forEach((key) => {
-      let query = `FOREIGN KEY (${conn.escapeId(key)}) REFERENCES ${conn.escapeId(fields[key].foreignKey!.table.getName())}(${conn.escapeId(fields[key].foreignKey!.field)})`;
+      let query = `CONSTRAINT FOREIGN KEY ${key + '_fk'} (${conn.escapeId(key)}) REFERENCES ${conn.escapeId(fields[key].foreignKey!.table.getName())}(${conn.escapeId(fields[key].foreignKey!.field)})`;
       if (fields[key].foreignKey!.onDelete) query += ` ON DELETE ${fields[key].foreignKey!.onDelete!}`;
       if (fields[key].foreignKey!.onUpdate) query += ` ON UPDATE ${fields[key].foreignKey!.onUpdate!}`;
       tableFields.push(query);
@@ -277,23 +278,22 @@ export class MariaDBConnection extends DatabaseConnection {
     const currentFields: IMariaDBDescribeField[] = await conn.query(`DESCRIBE ${tableName}`);
     const fieldsKeys = Object.keys(fields);
 
+    const tableData: { Table: string, 'Create Table': string } = (await conn.query(`SHOW CREATE TABLE ${tableName}`))[0];
+
     const fieldsToAdd = fieldsKeys.filter((key) => !currentFields.find((field) => field.Field === key));
     const fieldsToRemove = currentFields.filter((field) => !fields[field.Field]);
     const fieldsToUpdate: string[] = [];
-    const existingPrimaryKeys = currentFields.filter((field) => field.Key === 'PRI');
+    
     const newPrimaryKeys = fieldsKeys.filter((key) => fields[key].primaryKey);
-    const didPrimaryKeysChange = existingPrimaryKeys.length !== newPrimaryKeys.length ||
-      existingPrimaryKeys.some((key) => !newPrimaryKeys.includes(key.Field)) ||
-      newPrimaryKeys.some((key) => !existingPrimaryKeys.find((field) => field.Field === key));
-    const existingUniqueKeys = currentFields.filter((field) => field.Key === 'UNI');
-    const newUniqueKeys = fieldsKeys.filter((key) => fields[key].unique && !fields[key].primaryKey);
-    const uniqueKeysToRemove = existingUniqueKeys.filter((key) => !newUniqueKeys.includes(key.Field));
-    const uniqueKeysToAdd = newUniqueKeys.filter((key) => !existingUniqueKeys.find((field) => field.Field === key));
-    const existingForeignKeys = currentFields.filter((field) => field.Key === 'MUL');
-    const newForeignKeys = fieldsKeys.filter((key) => fields[key].foreignKey);
-    const foreignKeysToRemove = existingForeignKeys.filter((key) => !newForeignKeys.includes(key.Field)).map((item) => item.Field);
-    const foreignKeysToAdd = newForeignKeys.filter((key) => !existingForeignKeys.find((field) => field.Field === key));
-    const foreignKeysToUpdate = newForeignKeys.filter((key) => existingForeignKeys.find((field) => field.Field === key));
+    const newUniqueKeys = fieldsKeys.filter((key) => fields[key].type !== EDatabaseTypes.BOOLEAN && fields[key].unique && !fields[key].primaryKey);
+    const newForeignKeys = fieldsKeys.filter((key) => fields[key].foreignKey).map((key) => key + '_fk');
+
+    const currentPrimaryKey = (tableData['Create Table'].match(/PRIMARY KEY \((.*?)\)/)?.[1] ?? '').split(',').map(key => key.replace(/`/g, '').trim()).filter(key => key.length > 0);
+    const currentUniqueKeys = Array.from(tableData['Create Table'].matchAll(/UNIQUE KEY `(.*?)`/g)).map(match => match[1]).filter(key => !currentPrimaryKey.includes(key));
+    const currentForeignKeys = Array.from(
+      tableData['Create Table']
+        .matchAll(/CONSTRAINT `(.*?)` FOREIGN KEY \(`(.*?)`\) REFERENCES `(.*?)` \(`(.*?)`\)( ON DELETE (RESTRICT|CASCADE|SET NULL|NO ACTION))?( ON UPDATE (RESTRICT|CASCADE|SET NULL|NO ACTION))?/g),
+    ).map(match => match[1]);
 
     // Find all fields that should be updated
     for (const field of currentFields) {
@@ -309,20 +309,35 @@ export class MariaDBConnection extends DatabaseConnection {
     }
 
     const operations: string[] = [];
-    if (didPrimaryKeysChange) {
+    if (currentPrimaryKey.join(',') !== newPrimaryKeys.join(',')) {
       operations.push('DROP PRIMARY KEY');
       operations.push(`ADD PRIMARY KEY (${fieldsKeys.filter((fieldKey) => fields[fieldKey].primaryKey).map((key) => conn.escapeId(key)).join(', ')})`);
     }
+
     fieldsToRemove.forEach((field) => operations.push(`DROP ${field.Field}`));
     fieldsToAdd.forEach((field) => operations.push(`ADD ${this.createSQLField(conn, field, fields[field])}`));
     fieldsToUpdate.forEach((field) => operations.push(`CHANGE ${conn.escapeId(field)} ${this.createSQLField(conn, field, fields[field])}`));
-    uniqueKeysToRemove.forEach((field) => operations.push(`DROP INDEX ${field.Field}`));
+
+    const uniqueKeysToRemove = currentUniqueKeys.filter((key) => !newUniqueKeys.includes(key));
+    const uniqueKeysToAdd = newUniqueKeys.filter((key) => !currentUniqueKeys.includes(key));
+
+    uniqueKeysToRemove.forEach((field) => operations.push(`DROP INDEX ${field}`));
     uniqueKeysToAdd.forEach((field) => operations.push(`ADD UNIQUE INDEX ${field} (${field})`));
+
+    const foreignKeysToRemove = currentForeignKeys.filter((key) => !newForeignKeys.includes(key));
+    const foreignKeysToAdd = newForeignKeys.filter((key) => !currentForeignKeys.includes(key));
+    const foreignKeysToUpdate = newForeignKeys.filter((key) => currentForeignKeys.includes(key) && (key !== (key.replace(/_fk$/, '')) + '_fk'));
+
     [...foreignKeysToRemove, ...foreignKeysToUpdate].forEach((key) => operations.push(`DROP FOREIGN KEY ${conn.escapeId(key)}`));
     [...foreignKeysToAdd, ...foreignKeysToUpdate].forEach((key) => {
-      let query = `ADD FOREIGN KEY (${conn.escapeId(key)}) REFERENCES ${conn.escapeId(fields[key].foreignKey!.table.getName())}(${conn.escapeId(fields[key].foreignKey!.field)})`;
-      if (fields[key].foreignKey!.onDelete) query += ` ON DELETE ${fields[key].foreignKey!.onDelete!}`;
-      if (fields[key].foreignKey!.onUpdate) query += ` ON UPDATE ${fields[key].foreignKey!.onUpdate!}`;
+      const fieldKey = key.substring(0, key.length - 3);
+
+      let query = `ADD FOREIGN KEY ${key} (${conn.escapeId(fieldKey)}) REFERENCES ${
+        conn.escapeId(fields[fieldKey].foreignKey!.table.getName())
+      }(${conn.escapeId(fields[fieldKey].foreignKey!.field)})`;
+
+      if (fields[fieldKey].foreignKey!.onDelete) query += ` ON DELETE ${fields[fieldKey].foreignKey!.onDelete!}`;
+      if (fields[fieldKey].foreignKey!.onUpdate) query += ` ON UPDATE ${fields[fieldKey].foreignKey!.onUpdate!}`;
       operations.push(query);
     });
     if (operations.length > 0) await conn.query(`ALTER TABLE ${conn.escapeId(tableName)} ${operations.join(', ')}`);
