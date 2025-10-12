@@ -26,13 +26,14 @@ export class BaseModel {
     Object.keys(fields).forEach((fieldKey) => {
       if (fields[fieldKey].foreignKey) {
         if (fields[fieldKey].foreignKey!.table === this) throw new DatabaseException(`${fieldKey} foreign key's table references the model itself (Circular Model dependence).`);
-        if (!fields[fieldKey].foreignKey!.table.fields[fields[fieldKey].foreignKey!.field])
+        const field = fields[fieldKey].foreignKey!.table.fields[fields[fieldKey].foreignKey!.field];
+        if (!field)
           throw new DatabaseException(`Field ${fieldKey} has a foreign key with a field that doesn't exists on the table.`);
-        if (fields[fieldKey].foreignKey!.table.fields[fields[fieldKey].foreignKey!.field].type !== fields[fieldKey].type)
+        if (field.type !== fields[fieldKey].type)
           throw new DatabaseException(`Foreign key field ${fieldKey} has a different type than the one referenced.`);
-        if (fields[fieldKey].foreignKey!.table.fields[fields[fieldKey].foreignKey!.field].maxSize !== fields[fieldKey].maxSize)
+        if ((field.type !== EDatabaseTypes.BOOLEAN && field.maxSize) !== (fields[fieldKey].type !== EDatabaseTypes.BOOLEAN && fields[fieldKey].maxSize))
           throw new DatabaseException(`Foreign key field ${fieldKey} has a different maxSize than the one referenced.`);
-        if (fields[fieldKey].foreignKey!.table.fields[fields[fieldKey].foreignKey!.field].minSize !== fields[fieldKey].minSize)
+        if ((field.type !== EDatabaseTypes.BOOLEAN && field.minSize) !== (fields[fieldKey].type !== EDatabaseTypes.BOOLEAN && fields[fieldKey].minSize))
           throw new DatabaseException(`Foreign key field ${fieldKey} has a different minSize than the one referenced.`);
       }
     });
