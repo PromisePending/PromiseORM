@@ -259,8 +259,8 @@ export class MariaDBConnection extends DatabaseConnection {
     uniqueKeys.filter((key) => !primaryKeys.includes(key)).forEach((key) => tableFields.push(`UNIQUE INDEX ${key} (${key})`));
     fieldsKeys.filter(key => fields[key].foreignKey).forEach((key) => {
       let query = `FOREIGN KEY (${conn.escapeId(key)}) REFERENCES ${conn.escapeId(fields[key].foreignKey!.table.getName())}(${conn.escapeId(fields[key].foreignKey!.field)})`;
-      if (fields[key].foreignKey!.onDelete) query += ` ON DELETE ${conn.escapeId(fields[key].foreignKey!.onDelete!)}`;
-      if (fields[key].foreignKey!.onUpdate) query += ` ON UPDATE ${conn.escapeId(fields[key].foreignKey!.onUpdate!)}`;
+      if (fields[key].foreignKey!.onDelete) query += ` ON DELETE ${fields[key].foreignKey!.onDelete!}`;
+      if (fields[key].foreignKey!.onUpdate) query += ` ON UPDATE ${fields[key].foreignKey!.onUpdate!}`;
       tableFields.push(query);
     });
 
@@ -321,8 +321,8 @@ export class MariaDBConnection extends DatabaseConnection {
     [...foreignKeysToRemove, ...foreignKeysToUpdate].forEach((key) => operations.push(`DROP FOREIGN KEY ${conn.escapeId(key)}`));
     [...foreignKeysToAdd, ...foreignKeysToUpdate].forEach((key) => {
       let query = `ADD FOREIGN KEY (${conn.escapeId(key)}) REFERENCES ${conn.escapeId(fields[key].foreignKey!.table.getName())}(${conn.escapeId(fields[key].foreignKey!.field)})`;
-      if (fields[key].foreignKey!.onDelete) query += ` ON DELETE ${conn.escapeId(fields[key].foreignKey!.onDelete!)}`;
-      if (fields[key].foreignKey!.onUpdate) query += ` ON UPDATE ${conn.escapeId(fields[key].foreignKey!.onUpdate!)}`;
+      if (fields[key].foreignKey!.onDelete) query += ` ON DELETE ${fields[key].foreignKey!.onDelete!}`;
+      if (fields[key].foreignKey!.onUpdate) query += ` ON UPDATE ${fields[key].foreignKey!.onUpdate!}`;
       operations.push(query);
     });
     if (operations.length > 0) await conn.query(`ALTER TABLE ${conn.escapeId(tableName)} ${operations.join(', ')}`);
