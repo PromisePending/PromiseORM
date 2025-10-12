@@ -1,6 +1,6 @@
 {
   "name": "promiseorm",
-  "version": "1.0.5",
+  "version": "1.0.6",
   "description": "A Typescript ORM for automatic creation and management of models and entries from simple objects",
   "main": "build/index.js",
   "files": [
@@ -34,14 +34,14 @@
     "mariadb": "3.4.5"
   },
   "devDependencies": {
-    "@types/node": "^24.5.2",
-    "@typescript-eslint/eslint-plugin": "^8.44.1",
-    "@typescript-eslint/parser": "^8.44.1",
-    "eslint": "^9.36.0",
+    "@types/node": "^24.7.2",
+    "@typescript-eslint/eslint-plugin": "^8.46.0",
+    "@typescript-eslint/parser": "^8.46.0",
+    "eslint": "^9.37.0",
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-promise": "^7.2.1",
     "globals": "^16.4.0",
-    "typescript": "^5.9.2"
+    "typescript": "^5.9.3"
   }
 }

@@ -1,3 +1,7 @@
+# V1.0.6
+
+- Fix: Can't create tables with foreign keys due to invalid syntax for ON DELETE and ON UPDATE clauses
+
 # V1.0.5
 
 - Fix: Can't connect to MySql instances due to missing allowPublicKeyRetrieval: true in connection options
