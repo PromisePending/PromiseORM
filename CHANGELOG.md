@@ -1,3 +1,7 @@
+# v1.1.1
+
+- Fix: Select with filter doesn't work if the value of the field 'value' is falsy
+
 # v1.1.0
 
 - Feat: Better type on BaseModel creation
