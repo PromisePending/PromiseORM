@@ -1,6 +1,7 @@
 # v1.1.1
 
 - Fix: Select with filter doesn't work if the value of the field 'value' is falsy
+- Fix(types): Small fix on timestamp and boolean types
 
 # v1.1.0
 
