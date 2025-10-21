@@ -128,9 +128,9 @@ export class BaseModel {
         this.filterCheck(filterElement as IDatabaseQueryFilterExpression);
       } else {
         if (
-          !(filterElement as IDatabaseQueryFilter).operator ||
-          !(filterElement as IDatabaseQueryFilter).tableKey ||
-          !(filterElement as IDatabaseQueryFilter).value
+          (filterElement as IDatabaseQueryFilter).operator == null ||
+          (filterElement as IDatabaseQueryFilter).tableKey == null ||
+          (filterElement as IDatabaseQueryFilter).value === undefined
         )
           throw new DatabaseException('Filter must have operator, tableKey and value!');
         if (

@@ -12,7 +12,7 @@ export type IDatabaseField =
   | {
       type: EDatabaseTypes.BOOLEAN;
       nullable: boolean;
-      default?: any;
+      default?: boolean;
       autoIncrement?: boolean;
       primaryKey?: boolean;
       foreignKey?: ForeignKeyOptions;
@@ -23,7 +23,7 @@ export type IDatabaseField =
       minSize?: number;
       nullable: boolean;
       unique?: boolean;
-      default?: any;
+      default?: Date | 'CURRENT_TIMESTAMP()' | 'CURRENT_TIMESTAMP() ON UPDATE CURRENT_TIMESTAMP()';
       autoIncrement?: boolean;
       primaryKey?: boolean;
       foreignKey?: ForeignKeyOptions;
