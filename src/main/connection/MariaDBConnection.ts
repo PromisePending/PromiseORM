@@ -1,5 +1,6 @@
 import { EDatabaseQueryFilterOperator,
   EDatabaseTypes, EMariaDBFieldTypes,
+  IDatabaseConnectionRead,
   IDatabaseField, IDatabaseQueryFilter,
   IDatabaseQueryFilterExpression,
   IMariaDBDescribeField,
@@ -83,7 +84,12 @@ export class MariaDBConnection extends DatabaseConnection {
     } else {
       await conn.execute(instructions.join(' '));
       // selects just inserted data
-      result = (await this.read('*', database, { type: 'AND', filters: keys.map((key, index) => ({ tableKey: key, operator: EDatabaseQueryFilterOperator.EQUALS, value: values[index] })) }, 1))[0];
+      result = (await this.read({
+        keys: '*',
+        database,
+        filter: { type: 'AND', filters: keys.map((key, index) => ({ tableKey: key, operator: EDatabaseQueryFilterOperator.EQUALS, value: values[index] })) },
+        limit: 1,
+      }))[0];
     }
     return result;
   }
@@ -107,14 +113,21 @@ export class MariaDBConnection extends DatabaseConnection {
   /**
    * @private
    */
-  override async read(keys: ('*' | string[]), database: string, filter?: IDatabaseQueryFilterExpression, limit?: number): Promise<Record<string, any>[]> {
+  override async read({ keys, database, filter, limit, orderBy }: IDatabaseConnectionRead): Promise<Record<string, any>[]> {
     const conn = await this.getConnection();
     const operators: string[] = [];
     operators.push(typeof keys === 'string' ? '*' : keys.map(key => conn.escapeId(key)).join(', '));
     operators.push(`FROM ${conn.escapeId(database)}`);
     if (filter) operators.push(`WHERE ${this.filterBuilder(conn, filter)}`);
+    if (orderBy) {
+      operators.push(`ORDER BY ${
+        Array.isArray(orderBy) ?
+          orderBy.map((items) => `${conn.escapeId(items.field)} ${items.direction}`).join(', ') :
+          `${conn.escapeId(orderBy.field)} ${orderBy.direction}`
+      }`);
+    }
     if (limit) {
-      if (limit < 1) throw new DatabaseException('Limit must be a positive number greater than ');
+      if (limit < 1) throw new DatabaseException('Limit must be a positive number greater than 1');
       operators.push(`LIMIT ${limit}`);
     }
 
@@ -135,8 +148,15 @@ export class MariaDBConnection extends DatabaseConnection {
     instructions.push('WHERE');
     instructions.push(this.filterBuilder(conn, filter));
     await conn.execute(instructions.join(' '));
-    const result = (await this.read('*', database, { type: 'AND', filters: 
-      fields.map((key, index) => ({ tableKey: key, operator: EDatabaseQueryFilterOperator.EQUALS, value: newData[index] })) }, 1))[0];
+    const result = (await this.read({
+      keys: '*',
+      database,
+      filter: {
+        type: 'AND',
+        filters: fields.map((key, index) => ({ tableKey: key, operator: EDatabaseQueryFilterOperator.EQUALS, value: newData[index] })),
+      },
+      limit: 1,
+    }))[0];
     await conn.release();
     return result;
   }

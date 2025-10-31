@@ -1,4 +1,4 @@
-import { IDatabaseField, IDatabaseQueryFilterExpression } from '../interfaces';
+import { IDatabaseConnectionRead, IDatabaseField, IDatabaseQueryFilterExpression } from '../interfaces';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { DatabaseException } from '../errors';
 import { BaseModel } from '../models';
@@ -64,7 +64,7 @@ export abstract class DatabaseConnection {
    * @throws [{@link DatabaseException}]
    * @abstract
    */
-  public abstract read(keys: ('*' | string[]), database: string, filter?: IDatabaseQueryFilterExpression, limit?: number): Promise<Record<string, any>[]>
+  public abstract read({ keys, database, filter, limit, orderBy }: IDatabaseConnectionRead): Promise<Record<string, any>[]>
 
   /**
    * Inserts data on database, if it already exists, updates the selected fields

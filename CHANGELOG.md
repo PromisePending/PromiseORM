@@ -1,3 +1,11 @@
+# v1.2.0
+
+- Feat: 'Select' and 'Find' methods can now receive an orderBy parameter to order return the results from the database
+
+- BREAKING: 'Select' and 'Find' now receive an object as parameter instead of separated params
+
+- Chore: Updated dev dependencies
+
 # v1.1.1
 
 - Fix: Select with filter doesn't work if the value of the field 'value' is falsy
