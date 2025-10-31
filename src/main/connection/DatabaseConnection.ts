@@ -1,4 +1,4 @@
-import { IDatabaseConnectionRead, IDatabaseField, IDatabaseQueryFilterExpression } from '../interfaces';
+import { IDatabaseConnectionRead, IDatabaseCount, IDatabaseField, IDatabaseQueryFilterExpression } from '../interfaces';
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { DatabaseException } from '../errors';
 import { BaseModel } from '../models';
@@ -112,4 +112,14 @@ export abstract class DatabaseConnection {
    * @abstract
    */
   public abstract createOrUpdateTable(tableName: string, fields: Record<string, IDatabaseField>): Promise<void>
+
+  /**
+   * Returns the count of the provided fields
+   * @param fields Array of objects that specify the columns to count, if the count should be distinct, and optionally to what name rename the column of the count
+   * @param filter The filter to apply to the records
+   * @returns A promise containing an object with the count of all the requested fields
+   * @throws [{@link DatabaseException}]
+   * @abstract
+   */
+  public abstract count(database: string, { fields, filter }: { fields: IDatabaseCount[], filter?: IDatabaseQueryFilterExpression }): Promise<Record<string, number>>
 }
