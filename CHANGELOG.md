@@ -1,4 +1,4 @@
-# v1.1.2
+# v1.2.0
 
 - Feat: 'Select' and 'Find' methods can now receive an orderBy parameter to order return the results from the database
 
