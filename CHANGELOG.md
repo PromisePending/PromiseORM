@@ -1,3 +1,9 @@
+# v1.2.1
+
+- Feat: New 'Count' method that allows the counting of how many rows are in a table, how many not null columns, distinct values of a column and set a custom name for the count key in the result object.
+
+- Fix(types): Fix typing mistake that caused an regression forcing an object to be passed to 'Select' and 'Find', calling those methods without any argument will behave the same way as passing an empty object, this is a typing only mistake, that doesn't change how the methods behave or parse its parameters.
+
 # v1.2.0
 
 - Feat: 'Select' and 'Find' methods can now receive an orderBy parameter to order return the results from the database

@@ -3,4 +3,5 @@ export * from './EDatabaseQueryFilterOperator';
 export * from './IDatabaseQueryFilter';
 export * from './IDatabaseOrderBy';
 export * from './IDatabaseField';
+export * from './IDatabaseCount';
 export * from './EDatabaseTypes';

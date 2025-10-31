@@ -1,4 +1,4 @@
-import { EDatabaseQueryFilterOperator, EDatabaseTypes, IDatabaseField, IDatabaseOrderBy, IDatabaseQueryFilter, IDatabaseQueryFilterExpression } from '../interfaces';
+import { EDatabaseQueryFilterOperator, EDatabaseTypes, IDatabaseCount, IDatabaseField, IDatabaseOrderBy, IDatabaseQueryFilter, IDatabaseQueryFilterExpression } from '../interfaces';
 import { DatabaseConnection } from '../connection';
 import { DatabaseException } from '../errors';
 
@@ -157,7 +157,7 @@ export class BaseModel {
    * @returns The data found
    * @throws [{@link DatabaseException}]
    */
-  public async find(params: { query?: Record<string, any>, limit?: number, orderBy?: IDatabaseOrderBy }): Promise<Record<string, unknown>[]> {
+  public async find(params?: { query?: Record<string, any>, limit?: number, orderBy?: IDatabaseOrderBy }): Promise<Record<string, unknown>[]> {
     const { query, limit, orderBy } = params || {};
     this.checkIsReady();
     return this.connection!.read({ keys: '*', database: this.name!,
@@ -205,7 +205,7 @@ export class BaseModel {
    * @returns The data found
    * @throws [{@link DatabaseException}]
    */
-  public async select(params: { fields: string[], query?: Record<string, any>, filter?: IDatabaseQueryFilterExpression, limit?: number, orderBy?: IDatabaseOrderBy },
+  public async select(params: { fields: string[], filter?: IDatabaseQueryFilterExpression, limit?: number, orderBy?: IDatabaseOrderBy },
   ): Promise<Record<string, unknown>[]> {
     this.checkIsReady();
     if (!params) throw new DatabaseException('Missing params for \'select\' method call, if you want to retrieve all data on this table call \'find\' instead.');
@@ -246,9 +246,6 @@ export class BaseModel {
    * @throws [{@link DatabaseException}]
    */
   public async update(find: Record<string, any>, update: Record<string, any>): Promise<Record<string, any>> {
-    this.checkIsReady();
-    if (!update) throw new DatabaseException('Empty update!');
-    this.validFieldValueCheck(update);
     const filter: IDatabaseQueryFilterExpression = {
       type: 'AND',
       filters: Object.keys(find).map((fieldKey) => ({
@@ -257,9 +254,7 @@ export class BaseModel {
         value: find[fieldKey],
       })),
     };
-    const keys = Object.keys(update).filter((field) => !this.fields[field].autoIncrement);
-    const values = keys.map((fieldKey) => update[fieldKey] ?? null);
-    return this.connection!.update(this.name!, keys, values, filter);
+    return this.updateWhere(filter, update);
   }
 
   /**
@@ -321,5 +316,33 @@ export class BaseModel {
     this.checkIsReady();
     this.filterCheck(filter);
     return this.connection!.delete(this.name!, filter);
+  }
+
+  /**
+   * Counts rows in the table, call without parameters to get the total amount of rows
+   * 
+   * Use the fields parameter to count the amount of rows within a specific column (without counting NULL values)
+   * 
+   * Pass an object with { key: string, distinct: true } on the fields array to only count unique values for that column (Example: [{ key: 'category', distinct: true}] will return how many different categories there is on the table)
+   * 
+   * Use the optional alias parameter to rename the column. Example, [{ key: 'category', distinct: true, alias: 'categoryCount'}] will return the object [{ categoryCount: 7 }].
+   * 
+   * Pass a filter to only count rows that match an specific criteria. Example, only count the rows where the column 'price' is greater than 50 will return how many items cost more than 50. 
+   * 
+   * Note: if fields is not provided, will return [{ count: number }]
+   * @param fields
+   */
+  public async count(params?: { fields?: (IDatabaseCount | string)[], filter?: IDatabaseQueryFilterExpression }): Promise<Record<string, number>> {
+    const fields = params?.fields ?? undefined;
+    const filter = params?.filter ?? undefined;
+
+    this.checkIsReady();
+    this.filterCheck(filter);
+    if (fields) this.fieldsCheck(fields.map((field) => typeof field === 'string' ? field : field.key));
+
+    const finalFields: IDatabaseCount[] = fields?.map((field) => typeof field === 'string' ?
+      { key: field, distinct: false, alias: field } : { alias: field.alias ?? field.key, ...field }) ?? [{ key: '*', distinct: false, alias: 'count' }];
+
+    return this.connection!.count(this.name!, { fields: finalFields, filter });
   }
 }

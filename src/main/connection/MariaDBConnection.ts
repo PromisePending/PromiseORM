@@ -1,6 +1,7 @@
 import { EDatabaseQueryFilterOperator,
   EDatabaseTypes, EMariaDBFieldTypes,
   IDatabaseConnectionRead,
+  IDatabaseCount,
   IDatabaseField, IDatabaseQueryFilter,
   IDatabaseQueryFilterExpression,
   IMariaDBDescribeField,
@@ -195,6 +196,18 @@ export class MariaDBConnection extends DatabaseConnection {
     const result = await conn.query(`DELETE FROM ${conn.escapeId(database)} WHERE ${this.filterBuilder(conn, filter)}`);
     await conn.release();
     return result.affectedRows;
+  }
+
+  /**
+   * @private
+   */
+  override async count(database: string, { fields, filter }: { fields: IDatabaseCount[]; filter?: IDatabaseQueryFilterExpression; }): Promise<Record<string, number>> {
+    const conn = await this.getConnection();
+    const counts: string[] = [];
+    fields.forEach((field) => counts.push(`COUNT(${field.distinct ? 'DISTINCT ' : ''}${field.key})${field.alias ? ` AS ${conn.escape(field.alias)}` : ''}`));
+    const result = await conn.query(`SELECT ${counts.join(', ')} FROM ${conn.escapeId(database)}${filter ? ` WHERE ${this.filterBuilder(conn, filter)}` : ''}`);
+    await conn.release();
+    return result[0];
   }
 
   /**
