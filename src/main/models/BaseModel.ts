@@ -1,4 +1,4 @@
-import { EDatabaseQueryFilterOperator, EDatabaseTypes, IDatabaseField, IDatabaseQueryFilter, IDatabaseQueryFilterExpression } from '../interfaces';
+import { EDatabaseQueryFilterOperator, EDatabaseTypes, IDatabaseField, IDatabaseOrderBy, IDatabaseQueryFilter, IDatabaseQueryFilterExpression } from '../interfaces';
 import { DatabaseConnection } from '../connection';
 import { DatabaseException } from '../errors';
 
@@ -157,10 +157,11 @@ export class BaseModel {
    * @returns The data found
    * @throws [{@link DatabaseException}]
    */
-  public async find(query?: Record<string, any>, limit?: number): Promise<Record<string, unknown>[]> {
+  public async find(params: { query?: Record<string, any>, limit?: number, orderBy?: IDatabaseOrderBy }): Promise<Record<string, unknown>[]> {
+    const { query, limit, orderBy } = params || {};
     this.checkIsReady();
-    return this.connection!.read('*', this.name!,
-      query
+    return this.connection!.read({ keys: '*', database: this.name!,
+      filter: (query
         ? {
           type: 'AND',
           filters: Object.keys(query).map((fieldKey) => ({
@@ -169,9 +170,10 @@ export class BaseModel {
             value: query[fieldKey],
           })),
         }
-        : undefined,
+        : undefined),
       limit,
-    );
+      orderBy,
+    });
   }
 
   /**
@@ -181,7 +183,7 @@ export class BaseModel {
    * @throws [{@link DatabaseException}]
    */
   public async findOne(query?: Record<string, any>): Promise<Record<string, unknown> | undefined> {
-    return Promise.resolve((await this.find(query, 1))[0]);
+    return Promise.resolve((await this.find({ query, limit: 1 }))[0]);
   }
 
   /**
@@ -203,11 +205,14 @@ export class BaseModel {
    * @returns The data found
    * @throws [{@link DatabaseException}]
    */
-  public async select(fields: string[], filter?: IDatabaseQueryFilterExpression, limit?: number): Promise<Record<string, unknown>[]> {
+  public async select(params: { fields: string[], query?: Record<string, any>, filter?: IDatabaseQueryFilterExpression, limit?: number, orderBy?: IDatabaseOrderBy },
+  ): Promise<Record<string, unknown>[]> {
     this.checkIsReady();
+    if (!params) throw new DatabaseException('Missing params for \'select\' method call, if you want to retrieve all data on this table call \'find\' instead.');
+    const { fields, filter, limit, orderBy } = params;
     this.fieldsCheck(fields);
     this.filterCheck(filter);
-    return this.connection!.read(fields, this.name!, filter ?? undefined, limit);
+    return this.connection!.read({ keys: fields, database: this.name!, filter, limit, orderBy });
   }
 
   /**
@@ -218,7 +223,7 @@ export class BaseModel {
    * @throws [{@link DatabaseException}]
    */
   public async selectOne(fields: string[], filter?: IDatabaseQueryFilterExpression): Promise<Record<string, unknown> | undefined> {
-    return (await this.select(fields, filter, 1))[0];
+    return (await this.select({ fields, filter, limit: 1 }))[0];
   }
 
   /**
