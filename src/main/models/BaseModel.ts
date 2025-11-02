@@ -85,7 +85,8 @@ export class BaseModel {
   private validFieldValueCheck(data: Record<string, any>): void {
     const keys = Object.keys(data);
     this.fieldsCheck(keys);
-    if (keys.find((key) => this.nonNullableFields.includes(key) && (data[key] == null || data[key] === ''))) throw new DatabaseException(`An null param has given to a non nullable field!`);
+    const nonNullCheck = keys.filter((key) => this.nonNullableFields.includes(key) && (data[key] == null || data[key] === ''));
+    if (nonNullCheck.length > 0) throw new DatabaseException(`A null param was provided to a non-null field! Null was provided to the following non-null fields: ${nonNullCheck.join(', ')}`);
     keys.find((key) => {
       if (this.fields[key].type === EDatabaseTypes.SINT || this.fields[key].type === EDatabaseTypes.UINT) {
         if (typeof data[key] !== 'number') throw new DatabaseException(`Field ${key} has to be a number!`);
@@ -236,7 +237,7 @@ export class BaseModel {
     this.validFieldsCheck(data);
     const keys = Object.keys(this.fields).filter((field) => !this.fields[field].autoIncrement);
     const values = keys.map((fieldKey) => data[fieldKey] ?? this.fields[fieldKey].default ?? null);
-    return this.connection!.create(this.name!, keys, values);
+    return this.connection!.create(this.name!, keys, Object.keys(this.fields), values);
   }
 
   /**
@@ -284,7 +285,7 @@ export class BaseModel {
     const keys = Object.keys(this.fields).filter((field) => !this.fields[field].autoIncrement);
     if (!Array.isArray(updateFields) && !updateFields) updateFields = keys;
     const values = keys.map((fieldKey) => data[fieldKey] ?? null);
-    return this.connection!.upsert(this.name!, keys, values, updateFields);
+    return this.connection!.upsert(this.name!, keys, Object.keys(this.fields), values, updateFields);
   }
 
   /**

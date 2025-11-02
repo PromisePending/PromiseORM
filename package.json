@@ -1,6 +1,6 @@
 {
   "name": "promiseorm",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "A Typescript ORM for automatic creation and management of models and entries from simple objects",
   "main": "build/index.js",
   "files": [
