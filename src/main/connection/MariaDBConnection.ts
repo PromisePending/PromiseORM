@@ -76,12 +76,12 @@ export class MariaDBConnection extends DatabaseConnection {
     return await this.pool!.getConnection();
   }
 
-  private async processInstruction(conn: PoolConnection, database: string, keys: string[], values: any[], instructions: string[]): Promise<Record<string, any>> {
+  private async processInstruction(conn: PoolConnection, database: string, keys: string[], fields: string[], values: any[], instructions: string[]): Promise<Record<string, any>> {
     let result;
-    if (Number(this.version[0]) >= 10 && Number(this.version[1]) >= 5) {
+    if (Number(this.version[0]) > 10 || (Number(this.version[0]) === 10 && Number(this.version[1]) >= 5)) {
       instructions.push('RETURNING');
-      instructions.push(`${keys.join(',')}`);
-      result = await conn.execute(instructions.join(' '));
+      instructions.push(`${fields.join(',')}`);
+      result = (await conn.execute(instructions.join(' ')))[0];
     } else {
       await conn.execute(instructions.join(' '));
       // selects just inserted data
@@ -98,7 +98,7 @@ export class MariaDBConnection extends DatabaseConnection {
   /**
    * @private
    */
-  override async create(database: string, keys: string[], values: any[]): Promise<Record<string, any>> {
+  override async create(database: string, keys: string[], fields: string[], values: any[]): Promise<Record<string, any>> {
     const conn = await this.getConnection();
     const keysField = keys.map((key) => conn.escapeId(key)).join(', ');
     const instructions = ['INSERT INTO'];
@@ -106,7 +106,7 @@ export class MariaDBConnection extends DatabaseConnection {
     instructions.push(`(${keysField})`);
     instructions.push('VALUES');
     instructions.push(`(${values.map((value) => conn.escape(value)).join(', ')})`);
-    const result = await this.processInstruction(conn, database, keys, values, instructions);
+    const result = await this.processInstruction(conn, database, keys, fields, values, instructions);
     await conn.release();
     return result;
   }
@@ -165,7 +165,7 @@ export class MariaDBConnection extends DatabaseConnection {
   /**
    * @private
    */
-  override async upsert(database: string, keys: string[], values: any[], updateFields: string[]): Promise<Record<string, any>> {
+  override async upsert(database: string, keys: string[], fields: string[], values: any[], updateFields: string[]): Promise<Record<string, any>> {
     const conn = await this.getConnection();
     const keysField = keys.map((key) => conn.escapeId(key)).join(', ');
     const instructions = ['INSERT'];
@@ -183,7 +183,7 @@ export class MariaDBConnection extends DatabaseConnection {
       });
       instructions.push(fieldsSQL.join(','));
     }
-    const result = await this.processInstruction(conn, database, keys, values, instructions);
+    const result = await this.processInstruction(conn, database, keys, fields, values, instructions);
     await conn.release();
     return result;
   }

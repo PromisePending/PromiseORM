@@ -53,7 +53,7 @@ export abstract class DatabaseConnection {
    * @throws [{@link DatabaseException}]
    * @abstract
    */
-  public abstract create(database: string, keys: string[], values: any[]): Promise<Record<string, any>>
+  public abstract create(database: string, keys: string[], fields: string[], values: any[]): Promise<Record<string, any>>
 
   /**
    * Read records from the database
@@ -69,7 +69,7 @@ export abstract class DatabaseConnection {
   /**
    * Inserts data on database, if it already exists, updates the selected fields
    */
-  public abstract upsert(database: string, keys: string[], values: any[], updateFields: string[]): Promise<Record<string, any>>
+  public abstract upsert(database: string, keys: string[], fields: string[], values: any[], updateFields: string[]): Promise<Record<string, any>>
 
   /**
    * Update records in the database
