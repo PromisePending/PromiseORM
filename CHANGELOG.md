@@ -1,3 +1,6 @@
+# v1.2.3
+- Deps: Bumped MariaDB dependency to fix a vulnerability in the MariaDB driver.
+
 # v1.2.2
 
 - Fix: Wrong data return behavior on 'Create' and 'Upsert' methods due to different versions of MariaDB.
