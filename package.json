@@ -31,17 +31,14 @@
   },
   "homepage": "https://github.com/PromisePending/PromiseORM#readme",
   "dependencies": {
-    "mariadb": "3.4.5"
+    "mariadb": "3.5.4"
   },
   "devDependencies": {
     "@types/node": "^24.9.2",
-    "@typescript-eslint/eslint-plugin": "^8.46.2",
-    "@typescript-eslint/parser": "^8.46.2",
-    "eslint": "^9.38.0",
-    "eslint-plugin-import": "^2.32.0",
-    "eslint-plugin-node": "^11.1.0",
-    "eslint-plugin-promise": "^7.2.1",
+    "@typescript-eslint/eslint-plugin": "^8.71.0",
+    "@typescript-eslint/parser": "^8.71.0",
+    "eslint": "^9.39.5",
     "globals": "^16.4.0",
-    "typescript": "^5.9.3"
+    "typescript": "^6.0.3"
   }
 }

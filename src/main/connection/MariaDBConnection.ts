@@ -8,7 +8,7 @@ import { EDatabaseQueryFilterOperator,
   IMariaDBField,
 } from '../interfaces';
 import { DatabaseConnection } from './DatabaseConnection';
-import mariaDB, { PoolConnection } from 'mariadb';
+import mariaDB, { Pool, PoolConnection } from 'mariadb';
 import { DatabaseException } from '../errors';
 
 export class MariaDBConnection extends DatabaseConnection {
@@ -19,7 +19,7 @@ export class MariaDBConnection extends DatabaseConnection {
   private port: number;
   private version: string[];
 
-  private pool?: mariaDB.Pool;
+  private pool?: Pool;
   private isConnecting: boolean;
 
   constructor({ hostname, port, username, password, database }: { hostname: string, port: number, username: string, password: string, database: string }) {
@@ -63,7 +63,7 @@ export class MariaDBConnection extends DatabaseConnection {
   /**
    * @private
    */
-  private filterBuilder(conn: mariaDB.PoolConnection, filter: IDatabaseQueryFilter | IDatabaseQueryFilterExpression): string {
+  private filterBuilder(conn: PoolConnection, filter: IDatabaseQueryFilter | IDatabaseQueryFilterExpression): string {
     if (filter.hasOwnProperty('tableKey')) {
       const { tableKey, operator, value } = filter as IDatabaseQueryFilter;
       return `${conn.escapeId(tableKey)} ${ (value === null) ? (operator === EDatabaseQueryFilterOperator.NOT_EQUALS ? 'IS NOT' : 'IS') : operator } ${conn.escape(value)}`;
@@ -71,7 +71,7 @@ export class MariaDBConnection extends DatabaseConnection {
     return `(${(filter as IDatabaseQueryFilterExpression).filters.map((filter) => this.filterBuilder(conn, filter)).join(` ${(filter as IDatabaseQueryFilterExpression).type} `)})`;
   }
 
-  private async getConnection(): Promise<mariaDB.PoolConnection> {
+  private async getConnection(): Promise<PoolConnection> {
     if (!this.isConnected) throw new DatabaseException('Database is not connected!');
     return await this.pool!.getConnection();
   }
@@ -264,7 +264,7 @@ export class MariaDBConnection extends DatabaseConnection {
   /**
    * @private
    */
-  private createSQLField(conn: mariaDB.PoolConnection, name: string, data: IDatabaseField): string {
+  private createSQLField(conn: PoolConnection, name: string, data: IDatabaseField): string {
     const convertedTypes = this.convertTypes(data);
     let field = conn.escapeId(name) + ' ';
     field += convertedTypes.type;

@@ -17,6 +17,7 @@
     "skipLibCheck": true,
     "target": "ES2022",
     "module": "node16",
+    "rootDir": "./src/main",
     "outDir": "build",
     "types": ["node"],
     "noImplicitAny": true
