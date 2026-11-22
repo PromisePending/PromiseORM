@@ -22,7 +22,7 @@ It is designed to be used with any database, but currently only implements Maria
 import { DatabaseManager, MariaDBConnection, BaseModel, EDatabaseTypes } from 'promiseorm';
 // const { DatabaseManager, MariaDBConnection, BaseModel, EDatabaseTypes } = require('promiseorm');
 
-// if you're only going to have a single connection you may pass it as parameter in DatabaseManager constructor and it will automatically register it under the name 'default'
+// if you're only going to have a single connection you may pass it as parameter in DatabaseManager constructor and it will automatically register it under the name 'default', connecting when the first model is registered
 const dbmgr = new DatabaseManager();
 const mariadb = new MariaDBConnection({ hostname: 'localhost', port: 3306, username: 'username', password: 'password', database: 'database' });
 await dbmgr.registerConnection('prodmaria', mariadb);
@@ -65,7 +65,7 @@ iceModel.create({
 /* Output:
 
 > Successfully created item on database!
-{ flavor: 'chocolate', calories: 250, price: '9.99' }
+{ flavor: 'chocolate', calories: 250, price: 9.99 }
 
 */
 ```

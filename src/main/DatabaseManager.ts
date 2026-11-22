@@ -12,18 +12,26 @@ export class DatabaseManager {
 
   /**
    * Create a new instance of the DatabaseManager or return the existing instance if it already exists
-   * @param connection The connection to register in the DatabaseManager (optional)
+   * @param connection The connection to register in the DatabaseManager as 'default' (optional), it connects when the first model is registered
    * @returns A new instance of the DatabaseManager or the existing instance if it already exists
+   * @throws An error if a different connection is already registered as 'default'
    * @constructor
    */
   constructor(connection?: DatabaseConnection) {
     if (DatabaseManager.instance) {
-      if (connection && !DatabaseManager.instance.hasConnection('default')) {
-        DatabaseManager.instance.registerConnection('default', connection);
-      }
+      if (connection) DatabaseManager.instance.setDefaultConnection(connection);
       return DatabaseManager.instance;
     }
-    if (connection) this.registerConnection('default', connection);
+    if (connection) this.setDefaultConnection(connection);
+  }
+
+  /**
+   * @private
+   */
+  private setDefaultConnection(connection: DatabaseConnection): void {
+    const current = this.connections.get('default');
+    if (current && current !== connection) throw new Error('A different connection is already registered as \'default\' in the DatabaseManager!');
+    this.connections.set('default', connection);
   }
 
   /**

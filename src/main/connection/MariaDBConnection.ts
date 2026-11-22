@@ -17,12 +17,21 @@ export class MariaDBConnection extends DatabaseConnection {
   private password: string;
   private database: string;
   private port: number;
+  private dropUnknownColumns: boolean;
+  private timezone: string;
   private version: string[];
+  private explicitDefaultsForTimestamp: boolean = true;
+  private tables: Map<string, Record<string, IDatabaseField>> = new Map();
 
   private pool?: Pool;
-  private isConnecting: boolean;
+  private connecting?: Promise<void>;
 
-  constructor({ hostname, port, username, password, database }: { hostname: string, port: number, username: string, password: string, database: string }) {
+  /**
+   * @param timezone Timezone used to convert dates: 'local' (default) uses the Node.js timezone without changing the session one, 'auto' sets the session timezone to the Node.js one, '±HH:MM' forces a fixed offset
+   */
+  constructor({ hostname, port, username, password, database, dropUnknownColumns, timezone }: {
+    hostname: string, port: number, username: string, password: string, database: string, dropUnknownColumns?: boolean, timezone?: string,
+  }) {
     super();
 
     this.hostname = hostname;
@@ -30,31 +39,47 @@ export class MariaDBConnection extends DatabaseConnection {
     this.password = password;
     this.database = database;
     this.port = port;
+    this.dropUnknownColumns = dropUnknownColumns ?? false;
+    this.timezone = timezone ?? 'local';
     this.version = []; // [10, 2, 14, MariaDB]
-
-    this.isConnecting = false;
   }
 
   override async connect(): Promise<void> {
-    if (this.isConnected || this.isConnecting) return Promise.resolve();
-    this.pool = mariaDB.createPool({
-      host: this.hostname,
-      user: this.username,
-      password: this.password,
-      port: this.port,
-      database: this.database,
-      connectionLimit: 10,
-      allowPublicKeyRetrieval: true,
+    if (this.isConnected) return;
+    this.connecting ??= (async (): Promise<void> => {
+      this.pool = mariaDB.createPool({
+        host: this.hostname,
+        user: this.username,
+        password: this.password,
+        port: this.port,
+        database: this.database,
+        connectionLimit: 10,
+        allowPublicKeyRetrieval: true,
+        bigIntAsNumber: true,
+        decimalAsNumber: true,
+        insertIdAsNumber: true,
+        checkNumberRange: true,
+        timezone: this.timezone,
+      });
+      try {
+        const tmpConn = await this.pool.getConnection();
+        this.version = tmpConn.serverVersion().split(/\.|-/);
+        const [{ value }] = await tmpConn.query('SELECT @@explicit_defaults_for_timestamp AS value');
+        this.explicitDefaultsForTimestamp = Number(value) === 1;
+        await tmpConn.release();
+        this.isConnected = true;
+      } catch (error) {
+        await this.pool.end().catch(() => {});
+        throw error;
+      }
+    })().finally(() => {
+      this.connecting = undefined;
     });
-    this.isConnecting = true;
-    const tmpConn = await this.pool.getConnection();
-    this.version = tmpConn.serverVersion().split(/\.|-/);
-    await tmpConn.release();
-    this.isConnecting = false;
-    this.isConnected = true;
+    return this.connecting;
   }
 
   override async disconnect(): Promise<void> {
+    if (this.connecting) await this.connecting.catch(() => {});
     if (!this.isConnected) return;
     await this.pool?.end();
     this.isConnected = false;
@@ -66,9 +91,44 @@ export class MariaDBConnection extends DatabaseConnection {
   private filterBuilder(conn: PoolConnection, filter: IDatabaseQueryFilter | IDatabaseQueryFilterExpression): string {
     if (filter.hasOwnProperty('tableKey')) {
       const { tableKey, operator, value } = filter as IDatabaseQueryFilter;
-      return `${conn.escapeId(tableKey)} ${ (value === null) ? (operator === EDatabaseQueryFilterOperator.NOT_EQUALS ? 'IS NOT' : 'IS') : operator } ${conn.escape(value)}`;
+      if (value === null) return `${conn.escapeId(tableKey)} ${operator === EDatabaseQueryFilterOperator.NOT_EQUALS ? 'IS NOT' : 'IS'} NULL`;
+      if (operator === EDatabaseQueryFilterOperator.IN) return `${conn.escapeId(tableKey)} IN (${(value as any[]).map((item) => conn.escape(item)).join(', ')})`;
+      if (operator === EDatabaseQueryFilterOperator.BETWEEN) return `${conn.escapeId(tableKey)} BETWEEN ${conn.escape((value as any[])[0])} AND ${conn.escape((value as any[])[1])}`;
+      return `${conn.escapeId(tableKey)} ${operator} ${conn.escape(value)}`;
     }
     return `(${(filter as IDatabaseQueryFilterExpression).filters.map((filter) => this.filterBuilder(conn, filter)).join(` ${(filter as IDatabaseQueryFilterExpression).type} `)})`;
+  }
+
+  private hasFilters(filter?: IDatabaseQueryFilterExpression): filter is IDatabaseQueryFilterExpression {
+    return !!filter && filter.filters.length > 0;
+  }
+
+  private equalsFilter(data: Record<string, any>, keys: string[] = Object.keys(data)): IDatabaseQueryFilterExpression {
+    return { type: 'AND', filters: keys.map((key) => ({ tableKey: key, operator: EDatabaseQueryFilterOperator.EQUALS, value: data[key] })) };
+  }
+
+  private primaryKeys(database: string): string[] {
+    const fields = this.tables.get(database) ?? {};
+    return Object.keys(fields).filter((key) => fields[key].primaryKey);
+  }
+
+  private uniqueKeys(database: string): string[] {
+    const fields = this.tables.get(database) ?? {};
+    return Object.keys(fields).filter((key) => fields[key].type !== EDatabaseTypes.BOOLEAN && fields[key].unique && !fields[key].nullable);
+  }
+
+  private comparableKeys(database: string, keys: string[]): string[] {
+    const fields = this.tables.get(database) ?? {};
+    const comparable = keys.filter((key) => !fields[key] || (fields[key].type !== EDatabaseTypes.TIMESTAMP && fields[key].type !== EDatabaseTypes.DECIMAL));
+    return comparable.length > 0 ? comparable : keys;
+  }
+
+  private identityKeys(database: string): string[] {
+    const primaryKeys = this.primaryKeys(database);
+    if (primaryKeys.length > 0) return primaryKeys;
+    const uniqueKeys = this.uniqueKeys(database);
+    if (uniqueKeys.length > 0) return [uniqueKeys[0]];
+    return this.comparableKeys(database, Object.keys(this.tables.get(database) ?? {}));
   }
 
   private async getConnection(): Promise<PoolConnection> {
@@ -76,23 +136,53 @@ export class MariaDBConnection extends DatabaseConnection {
     return await this.pool!.getConnection();
   }
 
-  private async processInstruction(conn: PoolConnection, database: string, keys: string[], fields: string[], values: any[], instructions: string[]): Promise<Record<string, any>> {
-    let result;
+  private selectQuery(conn: PoolConnection, { keys, database, filter, limit, offset, orderBy }: IDatabaseConnectionRead): string {
+    const operators: string[] = [];
+    operators.push(typeof keys === 'string' ? '*' : keys.map(key => conn.escapeId(key)).join(', '));
+    operators.push(`FROM ${conn.escapeId(database)}`);
+    if (this.hasFilters(filter)) operators.push(`WHERE ${this.filterBuilder(conn, filter)}`);
+    if (orderBy) {
+      operators.push(`ORDER BY ${(Array.isArray(orderBy) ? orderBy : [orderBy]).map((item) => {
+        const direction = String(item.direction).toUpperCase();
+        if (direction !== 'ASC' && direction !== 'DESC') throw new DatabaseException(`Invalid order direction '${item.direction}', it must be ASC or DESC!`);
+        return `${conn.escapeId(item.field)} ${direction}`;
+      }).join(', ')}`);
+    }
+    if (limit != null) {
+      if (!Number.isInteger(limit) || limit < 0) throw new DatabaseException('Limit must be a non negative integer (0 means no limit)');
+      if (limit > 0) operators.push(`LIMIT ${limit}`);
+    }
+    if (offset != null) {
+      if (!Number.isInteger(offset) || offset < 0) throw new DatabaseException('Offset must be a non negative integer');
+      if (!limit) operators.push('LIMIT 18446744073709551615');
+      operators.push(`OFFSET ${offset}`);
+    }
+    return `SELECT ${operators.join(' ')}`;
+  }
+
+  private async processInstruction(
+    conn: PoolConnection, database: string, keys: string[], fields: string[], values: any[], instructions: string[], ignoreDuplicates: boolean = false,
+  ): Promise<Record<string, any>[]> {
     if (Number(this.version[0]) > 10 || (Number(this.version[0]) === 10 && Number(this.version[1]) >= 5)) {
       instructions.push('RETURNING');
-      instructions.push(`${fields.join(',')}`);
-      result = (await conn.execute(instructions.join(' ')))[0];
-    } else {
-      await conn.execute(instructions.join(' '));
-      // selects just inserted data
-      result = (await this.read({
-        keys: '*',
-        database,
-        filter: { type: 'AND', filters: keys.map((key, index) => ({ tableKey: key, operator: EDatabaseQueryFilterOperator.EQUALS, value: values[index] })) },
-        limit: 1,
-      }))[0];
+      instructions.push(fields.map((field) => conn.escapeId(field)).join(', '));
+      return await conn.query(instructions.join(' '));
     }
-    return result;
+    const { insertId, affectedRows } = await conn.query(instructions.join(' '));
+    if (ignoreDuplicates && affectedRows === 0) return [];
+    const inserted: Record<string, any> = {};
+    keys.forEach((key, index) => inserted[key] = values[index]);
+    const primaryKeys = this.primaryKeys(database);
+    const missingPrimaryKeys = primaryKeys.filter((key) => !keys.includes(key));
+    let identityKeys: string[];
+    if (primaryKeys.length > 0 && (missingPrimaryKeys.length === 0 || (missingPrimaryKeys.length === 1 && insertId))) {
+      if (missingPrimaryKeys.length === 1) inserted[missingPrimaryKeys[0]] = insertId;
+      identityKeys = primaryKeys;
+    } else {
+      const uniqueKey = this.uniqueKeys(database).find((key) => inserted[key] != null);
+      identityKeys = uniqueKey ? [uniqueKey] : this.comparableKeys(database, keys);
+    }
+    return await conn.query(this.selectQuery(conn, { keys: '*', database, filter: this.equalsFilter(inserted, identityKeys), limit: 1 }));
   }
 
   /**
@@ -100,102 +190,103 @@ export class MariaDBConnection extends DatabaseConnection {
    */
   override async create(database: string, keys: string[], fields: string[], values: any[]): Promise<Record<string, any>> {
     const conn = await this.getConnection();
-    const keysField = keys.map((key) => conn.escapeId(key)).join(', ');
-    const instructions = ['INSERT INTO'];
-    instructions.push(conn.escapeId(database));
-    instructions.push(`(${keysField})`);
-    instructions.push('VALUES');
-    instructions.push(`(${values.map((value) => conn.escape(value)).join(', ')})`);
-    const result = await this.processInstruction(conn, database, keys, fields, values, instructions);
-    await conn.release();
-    return result;
+    try {
+      const keysField = keys.map((key) => conn.escapeId(key)).join(', ');
+      const instructions = ['INSERT INTO'];
+      instructions.push(conn.escapeId(database));
+      instructions.push(`(${keysField})`);
+      instructions.push('VALUES');
+      instructions.push(`(${values.map((value) => conn.escape(value)).join(', ')})`);
+      return (await this.processInstruction(conn, database, keys, fields, values, instructions))[0];
+    } finally {
+      await conn.release();
+    }
   }
 
   /**
    * @private
    */
-  override async read({ keys, database, filter, limit, orderBy }: IDatabaseConnectionRead): Promise<Record<string, any>[]> {
+  override async read(params: IDatabaseConnectionRead): Promise<Record<string, any>[]> {
     const conn = await this.getConnection();
-    const operators: string[] = [];
-    operators.push(typeof keys === 'string' ? '*' : keys.map(key => conn.escapeId(key)).join(', '));
-    operators.push(`FROM ${conn.escapeId(database)}`);
-    if (filter) operators.push(`WHERE ${this.filterBuilder(conn, filter)}`);
-    if (orderBy) {
-      operators.push(`ORDER BY ${
-        Array.isArray(orderBy) ?
-          orderBy.map((items) => `${conn.escapeId(items.field)} ${items.direction}`).join(', ') :
-          `${conn.escapeId(orderBy.field)} ${orderBy.direction}`
-      }`);
+    try {
+      return await conn.query<Record<string, any>[]>(this.selectQuery(conn, params));
+    } finally {
+      await conn.release();
     }
-    if (limit) {
-      if (limit < 1) throw new DatabaseException('Limit must be a positive number greater than 1');
-      operators.push(`LIMIT ${limit}`);
-    }
-
-    const result = await conn.query<Record<string, any>[]>(`SELECT ${operators.join(' ')}`);
-    await conn.release();
-    return result;
   }
 
   /**
    * @private
    */
   override async update(database: string, fields: string[], newData: any[], filter: IDatabaseQueryFilterExpression): Promise<Record<string, any>> {
+    if (!this.hasFilters(filter)) throw new DatabaseException('Empty filter! Updating without a filter is not allowed.');
     const conn = await this.getConnection();
-    const instructions = ['UPDATE'];
-    instructions.push(conn.escapeId(database));
-    instructions.push('SET');
-    instructions.push(fields.map((field, index) => `${conn.escapeId(field)} = ${conn.escape(newData[index])}`).join(', '));
-    instructions.push('WHERE');
-    instructions.push(this.filterBuilder(conn, filter));
-    await conn.execute(instructions.join(' '));
-    const result = (await this.read({
-      keys: '*',
-      database,
-      filter: {
-        type: 'AND',
-        filters: fields.map((key, index) => ({ tableKey: key, operator: EDatabaseQueryFilterOperator.EQUALS, value: newData[index] })),
-      },
-      limit: 1,
-    }))[0];
-    await conn.release();
-    return result;
-  }
-
-  /**
-   * @private
-   */
-  override async upsert(database: string, keys: string[], fields: string[], values: any[], updateFields: string[]): Promise<Record<string, any>> {
-    const conn = await this.getConnection();
-    const keysField = keys.map((key) => conn.escapeId(key)).join(', ');
-    const instructions = ['INSERT'];
-    if (updateFields.length === 0) instructions.push('IGNORE');
-    instructions.push('INTO');
-    instructions.push(conn.escapeId(database));
-    instructions.push(`(${keysField})`);
-    instructions.push('VALUES');
-    instructions.push(`(${values.map((value) => conn.escape(value)).join(', ')})`);
-    if (updateFields.length > 0) {
-      instructions.push('ON DUPLICATE KEY UPDATE');
-      const fieldsSQL: string[] = [];
-      updateFields.forEach((field) => {
-        fieldsSQL.push(`${field} = VALUES(${field})`);
+    try {
+      const identityKeys = this.identityKeys(database);
+      const current: Record<string, any> = (await conn.query(this.selectQuery(conn, {
+        keys: identityKeys.length > 0 ? identityKeys : '*',
+        database,
+        filter,
+        limit: 1,
+      })))[0];
+      const instructions = ['UPDATE'];
+      instructions.push(conn.escapeId(database));
+      instructions.push('SET');
+      instructions.push(fields.map((field, index) => `${conn.escapeId(field)} = ${conn.escape(newData[index])}`).join(', '));
+      instructions.push('WHERE');
+      instructions.push(this.filterBuilder(conn, filter));
+      await conn.query(instructions.join(' '));
+      if (!current) return current;
+      fields.forEach((field, index) => {
+        if (field in current) current[field] = newData[index];
       });
-      instructions.push(fieldsSQL.join(','));
+      return (await conn.query(this.selectQuery(conn, { keys: '*', database, filter: this.equalsFilter(current), limit: 1 })))[0];
+    } finally {
+      await conn.release();
     }
-    const result = await this.processInstruction(conn, database, keys, fields, values, instructions);
-    await conn.release();
-    return result;
   }
 
   /**
    * @private
    */
-  override async delete(database: string, filter: IDatabaseQueryFilterExpression): Promise<number> {
+  override async upsert(database: string, keys: string[], fields: string[], values: any[], updateFields: string[]): Promise<Record<string, any> | []> {
     const conn = await this.getConnection();
-    const result = await conn.query(`DELETE FROM ${conn.escapeId(database)} WHERE ${this.filterBuilder(conn, filter)}`);
-    await conn.release();
-    return result.affectedRows;
+    try {
+      const keysField = keys.map((key) => conn.escapeId(key)).join(', ');
+      const instructions = ['INSERT'];
+      if (updateFields.length === 0) instructions.push('IGNORE');
+      instructions.push('INTO');
+      instructions.push(conn.escapeId(database));
+      instructions.push(`(${keysField})`);
+      instructions.push('VALUES');
+      instructions.push(`(${values.map((value) => conn.escape(value)).join(', ')})`);
+      if (updateFields.length > 0) {
+        instructions.push('ON DUPLICATE KEY UPDATE');
+        const fieldsSQL: string[] = [];
+        updateFields.forEach((field) => {
+          fieldsSQL.push(`${conn.escapeId(field)} = VALUES(${conn.escapeId(field)})`);
+        });
+        instructions.push(fieldsSQL.join(','));
+      }
+      const rows = await this.processInstruction(conn, database, keys, fields, values, instructions, updateFields.length === 0);
+      return rows.length === 0 ? [] : rows[0];
+    } finally {
+      await conn.release();
+    }
+  }
+
+  /**
+   * @private
+   */
+  override async delete(database: string, filter?: IDatabaseQueryFilterExpression): Promise<number> {
+    if (filter && !this.hasFilters(filter)) throw new DatabaseException('Empty filter! Deleting without a filter is not allowed.');
+    const conn = await this.getConnection();
+    try {
+      const result = await conn.query(`DELETE FROM ${conn.escapeId(database)}${this.hasFilters(filter) ? ` WHERE ${this.filterBuilder(conn, filter)}` : ''}`);
+      return result.affectedRows;
+    } finally {
+      await conn.release();
+    }
   }
 
   /**
@@ -203,11 +294,16 @@ export class MariaDBConnection extends DatabaseConnection {
    */
   override async count(database: string, { fields, filter }: { fields: IDatabaseCount[]; filter?: IDatabaseQueryFilterExpression; }): Promise<Record<string, number>> {
     const conn = await this.getConnection();
-    const counts: string[] = [];
-    fields.forEach((field) => counts.push(`COUNT(${field.distinct ? 'DISTINCT ' : ''}${field.key})${field.alias ? ` AS ${conn.escape(field.alias)}` : ''}`));
-    const result = await conn.query(`SELECT ${counts.join(', ')} FROM ${conn.escapeId(database)}${filter ? ` WHERE ${this.filterBuilder(conn, filter)}` : ''}`);
-    await conn.release();
-    return result[0];
+    try {
+      const counts: string[] = [];
+      fields.forEach((field) => counts.push(
+        `COUNT(${field.distinct ? 'DISTINCT ' : ''}${field.key === '*' ? '*' : conn.escapeId(field.key)})${field.alias ? ` AS ${conn.escapeId(field.alias)}` : ''}`,
+      ));
+      const result = await conn.query(`SELECT ${counts.join(', ')} FROM ${conn.escapeId(database)}${this.hasFilters(filter) ? ` WHERE ${this.filterBuilder(conn, filter)}` : ''}`);
+      return result[0];
+    } finally {
+      await conn.release();
+    }
   }
 
   /**
@@ -219,7 +315,7 @@ export class MariaDBConnection extends DatabaseConnection {
     const finalObject: IMariaDBField = {
       type: EMariaDBFieldTypes.string,
       attributes: '',
-      typeSize: (field.type === EDatabaseTypes.BOOLEAN ? 1 : field.maxSize) ?? 1,
+      typeSize: field.type === EDatabaseTypes.BOOLEAN ? 1 : field.maxSize,
       nullable: field.nullable,
       primaryKey: (field.primaryKey && (field.type === EDatabaseTypes.UINT || field.type === EDatabaseTypes.SINT)) ?? false,
       autoIncrement: field.autoIncrement ?? false,
@@ -229,12 +325,13 @@ export class MariaDBConnection extends DatabaseConnection {
     switch (field.type) {
       case EDatabaseTypes.DECIMAL:
         finalObject.type = EMariaDBFieldTypes.decimal;
-        var amountOfDecimalPlaces = ((field.maxSize! % 1) !== 0) ? field.maxSize!.toString().split('.')[1].length : 0;
-        var amountOfDigits = Math.ceil(Math.log10(Math.floor(field.maxSize!) + 1));
+        var amountOfDecimalPlaces = Math.max(this.decimalPlaces(field.maxSize!), this.decimalPlaces(field.minSize ?? 0));
+        var amountOfDigits = Math.ceil(Math.log10(Math.floor(Math.max(Math.abs(field.maxSize!), Math.abs(field.minSize ?? 0))) + 1));
         finalObject.typeSize = [amountOfDigits + amountOfDecimalPlaces, amountOfDecimalPlaces];
         break;
       case EDatabaseTypes.TIMESTAMP:
         finalObject.type = EMariaDBFieldTypes.timestamp;
+        if (!this.explicitDefaultsForTimestamp && !field.nullable && !field.primaryKey && field.default === undefined) finalObject.default = 'CURRENT_TIMESTAMP()';
         break;
       case EDatabaseTypes.STRING:
         finalObject.type = EMariaDBFieldTypes.string;
@@ -246,7 +343,9 @@ export class MariaDBConnection extends DatabaseConnection {
       case EDatabaseTypes.UINT:
         if (field.type === EDatabaseTypes.UINT) finalObject.attributes = 'UNSIGNED';
         finalObject.typeSize = Math.ceil(Math.log10(field.maxSize! + 1));
-        var amountOfBytes = Math.ceil(Math.log2(field.type === EDatabaseTypes.SINT ? field.maxSize! * 2 : field.maxSize!) / 8);
+        var amountOfBits = Math.ceil(Math.log2(Math.max(field.maxSize!, 0) + 1));
+        if (field.type === EDatabaseTypes.SINT) amountOfBits = Math.max(amountOfBits, Math.ceil(Math.log2(-Math.min(field.minSize ?? 0, 0)))) + 1;
+        var amountOfBytes = Math.ceil(amountOfBits / 8);
         if (amountOfBytes === 0 || amountOfBytes === 1) finalObject.type = EMariaDBFieldTypes.tinyint;
         else if (amountOfBytes === 2) finalObject.type = EMariaDBFieldTypes.smallint;
         else if (amountOfBytes === 3) finalObject.type = EMariaDBFieldTypes.mediumint;
@@ -261,24 +360,74 @@ export class MariaDBConnection extends DatabaseConnection {
     return finalObject;
   }
 
+  private decimalPlaces(value: number): number {
+    return (value % 1 !== 0) ? value.toString().split('.')[1].length : 0;
+  }
+
+  private isExpressionDefault(field: IMariaDBField): boolean {
+    return field.type === EMariaDBFieldTypes.timestamp && typeof field.default === 'string' &&
+      /^CURRENT_TIMESTAMP(\(\d?\))?( ON UPDATE CURRENT_TIMESTAMP(\(\d?\))?)?$/i.test(field.default);
+  }
+
+  private sqlType(field: IMariaDBField): string {
+    let type: string = field.type;
+    if (field.type !== EMariaDBFieldTypes.boolean && field.typeSize !== undefined) type += '(' + field.typeSize.toString() + ')';
+    if (field.attributes) type += ' ' + field.attributes;
+    return type;
+  }
+
+  private normalizeType(type: string): string {
+    return type.toLowerCase().replace(/\s+/g, ' ').trim()
+      .replace(/^boolean$/, 'tinyint(1)')
+      .replace(/^(tinyint|smallint|mediumint|int|bigint)\(\d+\)/, '$1');
+  }
+
+  private normalizeExtra(extra: string): string {
+    return extra.toLowerCase().replace('default_generated', '').replace(/\(\d*\)/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  private normalizeDefault(conn: PoolConnection, value: unknown): string | null {
+    if (value == null) return null;
+    if (typeof value === 'boolean') return value ? '1' : '0';
+    const text = (value instanceof Date ? conn.escape(value) : String(value)).replace(/^'(.*)'$/, '$1');
+    if (/^current_timestamp/i.test(text)) return text.toLowerCase().replace(/\(\d*\)/g, '');
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.0+$/.test(text)) return text.replace(/\.0+$/, '');
+    return (text !== '' && !isNaN(Number(text))) ? String(Number(text)) : text;
+  }
+
+  private referenceOption(option?: string): string {
+    return (!option || option === 'NO ACTION') ? 'RESTRICT' : option;
+  }
+
+  private foreignKeyNames(tableName: string, key: string): [string, string] {
+    return [`${tableName}_${key}_fk`, `${tableName}_${key}_fk2`];
+  }
+
   /**
    * @private
    */
   private createSQLField(conn: PoolConnection, name: string, data: IDatabaseField): string {
     const convertedTypes = this.convertTypes(data);
     let field = conn.escapeId(name) + ' ';
-    field += convertedTypes.type;
-    if (convertedTypes.type !== EMariaDBFieldTypes.boolean) field += '(' + convertedTypes.typeSize.toString() + ')';
-    field += ' ' + convertedTypes.attributes;
+    field += this.sqlType(convertedTypes);
     if (!convertedTypes.nullable) field += ' NOT NULL';
-    if (convertedTypes.default) field += ' DEFAULT ' + conn.escape(convertedTypes.default);
+    else if (!data.primaryKey) field += ' NULL';
+    if (convertedTypes.default !== undefined)
+      field += ' DEFAULT ' + (this.isExpressionDefault(convertedTypes) ? convertedTypes.default : conn.escape(convertedTypes.default));
     if (convertedTypes.autoIncrement) field += ' AUTO_INCREMENT';
     return field;
   }
 
-  override async createTable(tableName: string, fields: Record<string, IDatabaseField>): Promise<void> {
-    const conn = await this.getConnection();
+  private foreignKeySQL(conn: PoolConnection, name: string, key: string, field: IDatabaseField): string {
+    let query = `CONSTRAINT ${conn.escapeId(name)} FOREIGN KEY (${conn.escapeId(key)}) REFERENCES ${
+      conn.escapeId(field.foreignKey!.table.getName())
+    }(${conn.escapeId(field.foreignKey!.field)})`;
+    if (field.foreignKey!.onDelete) query += ` ON DELETE ${field.foreignKey!.onDelete!}`;
+    if (field.foreignKey!.onUpdate) query += ` ON UPDATE ${field.foreignKey!.onUpdate!}`;
+    return query;
+  }
 
+  private createTableQuery(conn: PoolConnection, tableName: string, fields: Record<string, IDatabaseField>): string {
     const fieldsKeys = Object.keys(fields);
     const tableFields = fieldsKeys.map((fieldKey) => this.createSQLField(conn, fieldKey, fields[fieldKey]));
     const primaryKeys: string[] = [];
@@ -291,89 +440,111 @@ export class MariaDBConnection extends DatabaseConnection {
     // Add the constraints
     if (primaryKeys.length > 0) tableFields.push(`PRIMARY KEY (${primaryKeys.join(', ')})`);
     uniqueKeys.filter((key) => !primaryKeys.includes(key)).forEach((key) => tableFields.push(`UNIQUE INDEX ${key} (${key})`));
-    fieldsKeys.filter(key => fields[key].foreignKey).forEach((key) => {
-      let query = `CONSTRAINT FOREIGN KEY ${key + '_fk'} (${conn.escapeId(key)}) REFERENCES ${conn.escapeId(fields[key].foreignKey!.table.getName())}(${conn.escapeId(fields[key].foreignKey!.field)})`;
-      if (fields[key].foreignKey!.onDelete) query += ` ON DELETE ${fields[key].foreignKey!.onDelete!}`;
-      if (fields[key].foreignKey!.onUpdate) query += ` ON UPDATE ${fields[key].foreignKey!.onUpdate!}`;
-      tableFields.push(query);
-    });
+    fieldsKeys.filter(key => fields[key].foreignKey).forEach((key) => tableFields.push(this.foreignKeySQL(conn, this.foreignKeyNames(tableName, key)[0], key, fields[key])));
 
-    await conn.query(`CREATE TABLE ${conn.escapeId(tableName)} (${tableFields.join(', ')})`);
-    await conn.release();
+    return `CREATE TABLE ${conn.escapeId(tableName)} (${tableFields.join(', ')})`;
+  }
+
+  override async createTable(tableName: string, fields: Record<string, IDatabaseField>): Promise<void> {
+    this.tables.set(tableName, fields);
+    const conn = await this.getConnection();
+    try {
+      await conn.query(this.createTableQuery(conn, tableName, fields));
+    } finally {
+      await conn.release();
+    }
   }
 
   override async createOrUpdateTable(tableName: string, fields: Record<string, IDatabaseField>): Promise<void> {
+    this.tables.set(tableName, fields);
     const conn = await this.getConnection();
+    try {
+      const tableExists = await conn.query('SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?', [tableName]);
+      if (tableExists.length === 0) {
+        await conn.query(this.createTableQuery(conn, tableName, fields));
+        return;
+      }
 
-    const tableExists = await conn.query(`SHOW TABLES LIKE '${tableName}'`);
-    if (tableExists.length === 0) return this.createTable(tableName, fields);
+      const currentFields: IMariaDBDescribeField[] = await conn.query(`DESCRIBE ${conn.escapeId(tableName)}`);
+      const fieldsKeys = Object.keys(fields);
 
-    const currentFields: IMariaDBDescribeField[] = await conn.query(`DESCRIBE ${tableName}`);
-    const fieldsKeys = Object.keys(fields);
+      const tableData: { Table: string, 'Create Table': string } = (await conn.query(`SHOW CREATE TABLE ${conn.escapeId(tableName)}`))[0];
 
-    const tableData: { Table: string, 'Create Table': string } = (await conn.query(`SHOW CREATE TABLE ${tableName}`))[0];
+      const fieldsToAdd = fieldsKeys.filter((key) => !currentFields.find((field) => field.Field === key));
+      const fieldsToRemove = currentFields.filter((field) => !fields[field.Field]);
+      const fieldsToUpdate: string[] = [];
 
-    const fieldsToAdd = fieldsKeys.filter((key) => !currentFields.find((field) => field.Field === key));
-    const fieldsToRemove = currentFields.filter((field) => !fields[field.Field]);
-    const fieldsToUpdate: string[] = [];
-    
-    const newPrimaryKeys = fieldsKeys.filter((key) => fields[key].primaryKey);
-    const newUniqueKeys = fieldsKeys.filter((key) => fields[key].type !== EDatabaseTypes.BOOLEAN && fields[key].unique && !fields[key].primaryKey);
-    const newForeignKeys = fieldsKeys.filter((key) => fields[key].foreignKey).map((key) => key + '_fk');
+      const newPrimaryKeys = fieldsKeys.filter((key) => fields[key].primaryKey);
+      const newUniqueKeys = fieldsKeys.filter((key) => fields[key].type !== EDatabaseTypes.BOOLEAN && fields[key].unique && !fields[key].primaryKey);
+      const newForeignKeys = fieldsKeys.filter((key) => fields[key].foreignKey);
 
-    const currentPrimaryKey = (tableData['Create Table'].match(/PRIMARY KEY \((.*?)\)/)?.[1] ?? '').split(',').map(key => key.replace(/`/g, '').trim()).filter(key => key.length > 0);
-    const currentUniqueKeys = Array.from(tableData['Create Table'].matchAll(/UNIQUE KEY `(.*?)`/g)).map(match => match[1]).filter(key => !currentPrimaryKey.includes(key));
-    const currentForeignKeys = Array.from(
-      tableData['Create Table']
-        .matchAll(/CONSTRAINT `(.*?)` FOREIGN KEY \(`(.*?)`\) REFERENCES `(.*?)` \(`(.*?)`\)( ON DELETE (RESTRICT|CASCADE|SET NULL|NO ACTION))?( ON UPDATE (RESTRICT|CASCADE|SET NULL|NO ACTION))?/g),
-    ).map(match => match[1]);
+      const currentPrimaryKey = (tableData['Create Table'].match(/PRIMARY KEY \((.*?)\)/)?.[1] ?? '').split(',').map(key => key.replace(/`/g, '').trim()).filter(key => key.length > 0);
+      const currentUniqueKeys = Array.from(tableData['Create Table'].matchAll(/UNIQUE KEY `(.*?)`/g)).map(match => match[1]).filter(key => !currentPrimaryKey.includes(key));
+      const currentForeignKeys = Array.from(
+        tableData['Create Table']
+          .matchAll(/CONSTRAINT `(.*?)` FOREIGN KEY \(`(.*?)`\) REFERENCES `(.*?)` \(`(.*?)`\)( ON DELETE (RESTRICT|CASCADE|SET NULL|NO ACTION))?( ON UPDATE (RESTRICT|CASCADE|SET NULL|NO ACTION))?/g),
+      ).map(match => ({ name: match[1], key: match[2], table: match[3], field: match[4], onDelete: match[6], onUpdate: match[8] }));
 
-    // Find all fields that should be updated
-    for (const field of currentFields) {
-      if (fieldsToRemove.find((rField) => field.Field === rField.Field)) continue;
-      let changed = false;
-      const newField = fields[field.Field];
-      const newData = this.convertTypes(newField);
-      if (`${newData.type}(${newData.typeSize}) ${newData.attributes}`.toLowerCase().trim() !== field.Type.toLowerCase()) changed = true;
-      if (newData.nullable !== (field.Null === 'YES')) changed = true;
-      if ((newData.autoIncrement ? 'auto_increment' : '') !== field.Extra) changed = true;
-      if ((newData.default ?? null) !== field.Default) changed = true;
-      if (changed) fieldsToUpdate.push(field.Field);
+      // Find all fields that should be updated
+      for (const field of currentFields) {
+        if (!fields[field.Field]) continue;
+        let changed = false;
+        const newField = fields[field.Field];
+        const newData = this.convertTypes(newField);
+        const [newDefault, newOnUpdate] = this.isExpressionDefault(newData) ? (newData.default as string).split(/ ON UPDATE /i) : [newData.default];
+        const newExtra = `${newData.autoIncrement ? 'auto_increment' : ''} ${newOnUpdate ? `on update ${newOnUpdate}` : ''}`;
+        if (this.normalizeType(this.sqlType(newData)) !== this.normalizeType(field.Type)) changed = true;
+        if ((newData.nullable && !newField.primaryKey) !== (field.Null === 'YES')) changed = true;
+        if (this.normalizeExtra(newExtra) !== this.normalizeExtra(field.Extra)) changed = true;
+        if (this.normalizeDefault(conn, newDefault) !== this.normalizeDefault(conn, field.Default)) changed = true;
+        if (changed) fieldsToUpdate.push(field.Field);
+      }
+
+      const operations: string[] = [];
+      if (currentPrimaryKey.join(',') !== newPrimaryKeys.join(',')) {
+        if (currentPrimaryKey.length > 0) operations.push('DROP PRIMARY KEY');
+        if (newPrimaryKeys.length > 0) operations.push(`ADD PRIMARY KEY (${newPrimaryKeys.map((key) => conn.escapeId(key)).join(', ')})`);
+      }
+
+      if (this.dropUnknownColumns) fieldsToRemove.forEach((field) => operations.push(`DROP ${conn.escapeId(field.Field)}`));
+      else if (fieldsToRemove.length > 0)
+        console.warn(`[PromiseORM] Table '${tableName}' has columns that don't exist on the model and will be kept: ${fieldsToRemove.map((field) => field.Field).join(', ')}`);
+      fieldsToAdd.forEach((field) => operations.push(`ADD ${this.createSQLField(conn, field, fields[field])}`));
+      fieldsToUpdate.forEach((field) => operations.push(`CHANGE ${conn.escapeId(field)} ${this.createSQLField(conn, field, fields[field])}`));
+
+      const uniqueKeysToRemove = currentUniqueKeys.filter((key) => fields[key] && !newUniqueKeys.includes(key));
+      const uniqueKeysToAdd = newUniqueKeys.filter((key) => !currentUniqueKeys.includes(key));
+
+      uniqueKeysToRemove.forEach((field) => operations.push(`DROP INDEX ${conn.escapeId(field)}`));
+      uniqueKeysToAdd.forEach((field) => operations.push(`ADD UNIQUE INDEX ${conn.escapeId(field)} (${conn.escapeId(field)})`));
+
+      const foreignKeysToRemove = currentForeignKeys.filter((current) => {
+        if (!fields[current.key]) return this.dropUnknownColumns;
+        const foreignKey = fields[current.key].foreignKey;
+        return !foreignKey ||
+          !this.foreignKeyNames(tableName, current.key).includes(current.name) ||
+          current.table !== foreignKey.table.getName() ||
+          current.field !== foreignKey.field ||
+          this.referenceOption(current.onDelete) !== this.referenceOption(foreignKey.onDelete) ||
+          this.referenceOption(current.onUpdate) !== this.referenceOption(foreignKey.onUpdate);
+      });
+      const foreignKeysToAdd = newForeignKeys.filter((key) => !currentForeignKeys.find((current) => current.key === key && !foreignKeysToRemove.includes(current)));
+
+      const usedNames = currentForeignKeys.map((current) => current.name);
+      const reusedNames: string[] = [];
+      foreignKeysToAdd.forEach((key) => {
+        const names = this.foreignKeyNames(tableName, key);
+        const name = names.find((candidate) => !usedNames.includes(candidate)) ?? names[0];
+        if (usedNames.includes(name)) reusedNames.push(name);
+        usedNames.push(name);
+        operations.push(`ADD ${this.foreignKeySQL(conn, name, key, fields[key])}`);
+      });
+      if (reusedNames.length > 0)
+        await conn.query(`ALTER TABLE ${conn.escapeId(tableName)} ${reusedNames.map((name) => `DROP FOREIGN KEY ${conn.escapeId(name)}`).join(', ')}`);
+      operations.unshift(...foreignKeysToRemove.filter((current) => !reusedNames.includes(current.name)).map((current) => `DROP FOREIGN KEY ${conn.escapeId(current.name)}`));
+      if (operations.length > 0) await conn.query(`ALTER TABLE ${conn.escapeId(tableName)} ${operations.join(', ')}`);
+    } finally {
+      await conn.release();
     }
-
-    const operations: string[] = [];
-    if (currentPrimaryKey.join(',') !== newPrimaryKeys.join(',')) {
-      operations.push('DROP PRIMARY KEY');
-      operations.push(`ADD PRIMARY KEY (${fieldsKeys.filter((fieldKey) => fields[fieldKey].primaryKey).map((key) => conn.escapeId(key)).join(', ')})`);
-    }
-
-    fieldsToRemove.forEach((field) => operations.push(`DROP ${field.Field}`));
-    fieldsToAdd.forEach((field) => operations.push(`ADD ${this.createSQLField(conn, field, fields[field])}`));
-    fieldsToUpdate.forEach((field) => operations.push(`CHANGE ${conn.escapeId(field)} ${this.createSQLField(conn, field, fields[field])}`));
-
-    const uniqueKeysToRemove = currentUniqueKeys.filter((key) => !newUniqueKeys.includes(key));
-    const uniqueKeysToAdd = newUniqueKeys.filter((key) => !currentUniqueKeys.includes(key));
-
-    uniqueKeysToRemove.forEach((field) => operations.push(`DROP INDEX ${field}`));
-    uniqueKeysToAdd.forEach((field) => operations.push(`ADD UNIQUE INDEX ${field} (${field})`));
-
-    const foreignKeysToRemove = currentForeignKeys.filter((key) => !newForeignKeys.includes(key));
-    const foreignKeysToAdd = newForeignKeys.filter((key) => !currentForeignKeys.includes(key));
-    const foreignKeysToUpdate = newForeignKeys.filter((key) => currentForeignKeys.includes(key) && (key !== (key.replace(/_fk$/, '')) + '_fk'));
-
-    [...foreignKeysToRemove, ...foreignKeysToUpdate].forEach((key) => operations.push(`DROP FOREIGN KEY ${conn.escapeId(key)}`));
-    [...foreignKeysToAdd, ...foreignKeysToUpdate].forEach((key) => {
-      const fieldKey = key.substring(0, key.length - 3);
-
-      let query = `ADD FOREIGN KEY ${key} (${conn.escapeId(fieldKey)}) REFERENCES ${
-        conn.escapeId(fields[fieldKey].foreignKey!.table.getName())
-      }(${conn.escapeId(fields[fieldKey].foreignKey!.field)})`;
-
-      if (fields[fieldKey].foreignKey!.onDelete) query += ` ON DELETE ${fields[fieldKey].foreignKey!.onDelete!}`;
-      if (fields[fieldKey].foreignKey!.onUpdate) query += ` ON UPDATE ${fields[fieldKey].foreignKey!.onUpdate!}`;
-      operations.push(query);
-    });
-    if (operations.length > 0) await conn.query(`ALTER TABLE ${conn.escapeId(tableName)} ${operations.join(', ')}`);
-    await conn.release();
   }
 }

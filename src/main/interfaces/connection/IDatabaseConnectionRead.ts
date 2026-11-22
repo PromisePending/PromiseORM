@@ -5,5 +5,6 @@ export interface IDatabaseConnectionRead {
   database: string,
   filter?: IDatabaseQueryFilterExpression,
   limit?: number,
+  offset?: number,
   orderBy?: IDatabaseOrderBy | IDatabaseOrderBy[]
 }
