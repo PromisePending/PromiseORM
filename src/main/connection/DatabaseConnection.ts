@@ -1,5 +1,4 @@
 import { IDatabaseConnectionRead, IDatabaseCount, IDatabaseField, IDatabaseQueryFilterExpression } from '../interfaces';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { DatabaseException } from '../errors';
 import { BaseModel } from '../models';
 
@@ -16,6 +15,7 @@ export abstract class DatabaseConnection {
    */
   public async registerModel(name: string, model: BaseModel): Promise<BaseModel> {
     if (this.registeredModels.has(name)) throw new Error(`Model with the name '${name}' is already registered in this database connection!`);
+    if (!this.isConnected) throw new DatabaseException(`Database connection is not established!`);
     await model.register(name, this);
     this.registeredModels.set(name, model);
     return Promise.resolve(model);
@@ -31,7 +31,7 @@ export abstract class DatabaseConnection {
   }
 
   /**
-   * Connect to the database
+   * Connect to the database, concurrent calls must resolve only when the connection is established
    * @returns A promise that resolves when the connection is established
    * @abstract
    */
@@ -47,7 +47,7 @@ export abstract class DatabaseConnection {
   /**
    * Create a new record in the database
    * @param database The name of the database
-   * @param keys The keys of the record
+   * @param keys The keys of the record, fields omitted from it must receive their default value
    * @param values The values of the record
    * @returns A promise that resolves when the record is created
    * @throws [{@link DatabaseException}]
@@ -64,12 +64,12 @@ export abstract class DatabaseConnection {
    * @throws [{@link DatabaseException}]
    * @abstract
    */
-  public abstract read({ keys, database, filter, limit, orderBy }: IDatabaseConnectionRead): Promise<Record<string, any>[]>
+  public abstract read({ keys, database, filter, limit, offset, orderBy }: IDatabaseConnectionRead): Promise<Record<string, any>[]>
 
   /**
    * Inserts data on database, if it already exists, updates the selected fields
    */
-  public abstract upsert(database: string, keys: string[], fields: string[], values: any[], updateFields: string[]): Promise<Record<string, any>>
+  public abstract upsert(database: string, keys: string[], fields: string[], values: any[], updateFields: string[]): Promise<Record<string, any> | []>
 
   /**
    * Update records in the database
@@ -86,12 +86,12 @@ export abstract class DatabaseConnection {
   /**
    * Delete records from the database
    * @param database The name of the database
-   * @param filter The filter to apply to the records
+   * @param filter The filter to apply to the records, if not provided all records are deleted
    * @returns A promise that resolves when the records are deleted
    * @throws [{@link DatabaseException}]
    * @abstract
    */
-  public abstract delete(database: string, filter: IDatabaseQueryFilterExpression): Promise<number>
+  public abstract delete(database: string, filter?: IDatabaseQueryFilterExpression): Promise<number>
 
   /**
    * Create a table in the database

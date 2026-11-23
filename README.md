@@ -65,7 +65,7 @@ iceModel.create({
 /* Output:
 
 > Successfully created item on database!
-{ flavor: 'chocolate', calories: 250, price: '9.99' }
+{ flavor: 'chocolate', calories: 250, price: 9.99 }
 
 */
 ```
