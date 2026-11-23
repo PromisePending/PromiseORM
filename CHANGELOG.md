@@ -1,4 +1,6 @@
-# v1.3.0
+# Changelog
+
+## v1.3.0
 
 - Feat: New 'deleteAll' method to delete all rows of a table.
 
@@ -79,11 +81,11 @@
 - BREAKING(types): 'Upsert' return type is now `Record<string, unknown> | []`, matching the empty array returned when the row is duplicated and ignored, use `Array.isArray` on the result before accessing its fields.
   - This is a typing only change, the runtime behavior is the one already documented.
 
-# v1.2.3
+## v1.2.3
 
 - Deps: Bumped MariaDB dependency to fix a vulnerability in the MariaDB driver.
 
-# v1.2.2
+## v1.2.2
 
 - Fix: Wrong data return behavior on 'Create' and 'Upsert' methods due to different versions of MariaDB.
 
@@ -91,26 +93,26 @@
 
 - Fix(typo): Improved non-null check message, fixed orthography and added more context to the error.
 
-# v1.2.1
+## v1.2.1
 
 - Feat: New 'Count' method that allows the counting of how many rows are in a table, how many not null columns, distinct values of a column and set a custom name for the count key in the result object.
 
 - Fix(types): Fix typing mistake that caused an regression forcing an object to be passed to 'Find', calling this method without any argument will behave the same way as passing an empty object.
   - This is a typing only mistake, that doesn't change how the method behave or parse its parameters.
 
-# v1.2.0
+## v1.2.0
 
 - Feat: 'Select' and 'Find' methods can now receive an orderBy parameter to order the return the results from the database.
 
 - BREAKING: 'Select' and 'Find' now receive an object as parameter instead of separated params.
 
-# v1.1.1
+## v1.1.1
 
 - Fix: Select with filter doesn't work if the value of the field 'value' is falsy.
 
 - Fix(types): Small fix on timestamp and boolean types.
 
-# v1.1.0
+## v1.1.0
 
 - Feat: Better type on BaseModel creation.
 
@@ -122,21 +124,21 @@
 
 - BREAKING: Changed constructor of MariaDBConnection to accept an object instead of multiple parameters.
 
-# v1.0.6
+## v1.0.6
 
 - Fix: Can't create tables with foreign keys due to invalid syntax for ON DELETE and ON UPDATE clauses.
 
-# v1.0.5
+## v1.0.5
 
 - Fix: Can't connect to MySql instances due to missing allowPublicKeyRetrieval: true in connection options.
 
-# v1.0.4
+## v1.0.4
 
 - NOTICE: Rebranding 'promisedb' to 'promiseorm'.
 
 - CI: Add CI.
 
-# v1.0.3
+## v1.0.3
 
 - Fix: Register schema not awaiting before returning.
 
