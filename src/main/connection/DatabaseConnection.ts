@@ -1,5 +1,4 @@
 import { IDatabaseConnectionRead, IDatabaseCount, IDatabaseField, IDatabaseQueryFilterExpression } from '../interfaces';
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 import { DatabaseException } from '../errors';
 import { BaseModel } from '../models';
 
@@ -16,7 +15,7 @@ export abstract class DatabaseConnection {
    */
   public async registerModel(name: string, model: BaseModel): Promise<BaseModel> {
     if (this.registeredModels.has(name)) throw new Error(`Model with the name '${name}' is already registered in this database connection!`);
-    await this.connect();
+    if (!this.isConnected) throw new DatabaseException(`Database connection is not established!`);
     await model.register(name, this);
     this.registeredModels.set(name, model);
     return Promise.resolve(model);
