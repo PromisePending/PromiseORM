@@ -22,7 +22,7 @@ It is designed to be used with any database, but currently only implements Maria
 import { DatabaseManager, MariaDBConnection, BaseModel, EDatabaseTypes } from 'promiseorm';
 // const { DatabaseManager, MariaDBConnection, BaseModel, EDatabaseTypes } = require('promiseorm');
 
-// if you're only going to have a single connection you may pass it as parameter in DatabaseManager constructor and it will automatically register it under the name 'default', connecting when the first model is registered
+// if you're only going to have a single connection you may pass it as parameter in DatabaseManager constructor and it will automatically register it under the name 'default'
 const dbmgr = new DatabaseManager();
 const mariadb = new MariaDBConnection({ hostname: 'localhost', port: 3306, username: 'username', password: 'password', database: 'database' });
 await dbmgr.registerConnection('prodmaria', mariadb);

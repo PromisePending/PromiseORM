@@ -19,19 +19,10 @@ export class DatabaseManager {
    */
   constructor(connection?: DatabaseConnection) {
     if (DatabaseManager.instance) {
-      if (connection) DatabaseManager.instance.setDefaultConnection(connection);
+      if (connection) DatabaseManager.instance.registerConnection('default', connection);
       return DatabaseManager.instance;
     }
-    if (connection) this.setDefaultConnection(connection);
-  }
-
-  /**
-   * @private
-   */
-  private setDefaultConnection(connection: DatabaseConnection): void {
-    const current = this.connections.get('default');
-    if (current && current !== connection) throw new Error('A different connection is already registered as \'default\' in the DatabaseManager!');
-    this.connections.set('default', connection);
+    if (connection) this.registerConnection('default', connection);
   }
 
   /**

@@ -36,7 +36,7 @@
 
 - Fix: Wrong error message on invalid limit.
 
-- Fix: Connection passed to DatabaseManager constructor causing an unhandled rejection on connection errors and being silently ignored when a 'default' connection already exists, it now connects when the first model is registered.
+- Fix: Connection passed to DatabaseManager constructor causing an unhandled rejection on connection errors and being silently ignored when a 'default' connection already exists.
 
 - Fix: Concurrent calls to 'connect' on MariaDBConnection resolving before the connection is established.
 
